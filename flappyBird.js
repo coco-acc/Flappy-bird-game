@@ -21,16 +21,14 @@ class Bird {
 }
 
 class Pipe {
-    constructor(x, y, width, height, imgSrc) {
+    constructor(x, y, width, height, img) {
         this.x = x;
         this.y = y;
         this.width = width;
         this.height = height;
         this.passed = false;
-        this.img = new Image();
-        this.img.src = imgSrc;
+        this.img = img; // Use preloaded image
     }
-
     move(speed) {
         this.x += speed;
     }
@@ -82,8 +80,12 @@ class Game {
         this.pipeX = this.board.width;
         this.pipeY = 0;
 
-        this.topPipeImg = "./toppipe.png";
-        this.bottomPipeImg = "./bottompipe.png";
+        this.pipeTopImg = new Image();
+        this.pipeTopImg.src = "./toppipe.png";
+
+        this.pipeBottomImg = new Image();
+        this.pipeBottomImg.src = "./bottompipe.png";
+
 
         this.soundEnabled = true; // Default value
         this.audioManager = new AudioManager(
@@ -106,7 +108,15 @@ class Game {
         this.currentLevel = "normal"; // Default level
         this.gameStarted = false;
         this.gameOver = false;
+        this.paused = false; // Pause state
         this.score = 0;
+
+         this.pauseButton = {
+            x: this.board.width / 2,
+            y: 30,
+            width: 40,
+            height: 40
+        };
 
         document.addEventListener("click", () => {
             Object.values(this.audioManager.sounds).forEach(sound => {
@@ -127,48 +137,65 @@ class Game {
 	        clearInterval(this.pipeInterval); // Clear existing interval
 	    }
 	    this.gameStarted = true;
+        this.paused = false;
 	    requestAnimationFrame(() => this.update());
 	    this.pipeInterval = setInterval(() => this.placePipes(), 1500); // Store interval reference
 	}
 
     update() {
-        if (!this.gameStarted) return;
-        if (this.gameOver) return;
+        if (!this.gameStarted || this.gameOver || this.paused) return;
 
         requestAnimationFrame(() => this.update());
         this.context.clearRect(0, 0, this.board.width, this.board.height);
 
+        this.drawPauseButton();
+        this.drawBackButton();
         this.drawBackButton();
         this.bird.move();
+        console.log('velocityY:',this.bird.velocityY);
+
         this.bird.draw(this.context);
 
-        if (this.bird.y > this.board.height) {
+         if (this.bird.y > this.board.height) {
             this.gameOver = true;
         }
 
-        this.pipes.forEach((pipe) => {
+        for (let i = 0; i < this.pipes.length; i++) {
+            let pipe = this.pipes[i];
+
             pipe.move(this.velocityX);
             pipe.draw(this.context);
+
             if (!pipe.passed && this.bird.x > pipe.x + pipe.width) {
                 this.score += 0.5;
                 pipe.passed = true;
             }
+
+            // ✅ Optimized Collision Check
+            if (pipe.x + pipe.width < this.bird.x - 10) {
+                continue; // Skip checking pipes already passed
+            }
+
             if (this.detectCollision(this.bird, pipe)) {
                 this.gameOver = true;
+                break;
             }
-        });
+        }
 
-        this.pipes = this.pipes.filter(pipe => pipe.x > -this.pipeWidth);
+        if (!this.gameOver) {
+            this.pipes = this.pipes.filter(pipe => pipe.x > -this.pipeWidth);
+        }
         this.drawScore();
     }
 
     placePipes() {
-        if (this.gameOver || !this.gameStarted) return;
+        if (this.gameOver || !this.gameStarted || this.paused) return;
         let randomPipeY = this.pipeY - this.pipeHeight / 4 - Math.random() * (this.pipeHeight / 2);
         let openingSpace = this.board.height / 4;
 
-        this.pipes.push(new Pipe(this.pipeX, randomPipeY, this.pipeWidth, this.pipeHeight, this.topPipeImg));
-        this.pipes.push(new Pipe(this.pipeX, randomPipeY + this.pipeHeight + openingSpace, this.pipeWidth, this.pipeHeight, this.bottomPipeImg));
+        this.pipes.push(new Pipe(this.pipeX, randomPipeY, this.pipeWidth, this.pipeHeight, this.pipeTopImg));
+        this.pipes.push(new Pipe(this.pipeX, randomPipeY + this.pipeHeight + openingSpace, this.pipeWidth, this.pipeHeight, this.pipeBottomImg));
+
     }
 
     moveBird(e) {
@@ -194,14 +221,17 @@ class Game {
     }
 
     resetGame() {
-	    this.bird.y = this.board.height/2;
-	    this.pipes = [];
-	    this.score = 0;
-	    this.gameOver = false;
-	    this.restartPending = false; // Ensure restart flag is reset
+        this.bird.y = this.board.height / 2;
+        this.bird.velocityY = 0; // Reset velocity to remove excess downward force
+    
+        this.pipes = []; // Clear pipes after a delay to ensure they are visible after game over
+        this.score = 0;
+        this.gameOver = false;
+        this.restartPending = false;
 
-	    this.start(); // Restart the game loop
-	}
+        this.start(); // Restart the game loop
+    }
+
 
     drawScore() {
         this.context.fillStyle = "white";
@@ -210,6 +240,13 @@ class Game {
         if (this.gameOver) {
             this.context.fillText('GAME OVER!', this.board.width / 8, this.board.height / 2);
         }
+    }
+
+    drawPauseButton() {
+        this.context.fillStyle = "white";
+        this.context.font = "30px sans-serif";
+        this.context.fillText("||", this.board.width / 2 - 10, 40);
+        this.pauseButton = { x: this.board.width / 2 - 10, y: 20, width: 20, height: 30 };
     }
 
     drawBackButton() {
@@ -233,6 +270,12 @@ class Game {
             this.audioManager.play("backButton"); // Play back button sound
             this.goToMenu();
             return;
+        }
+
+        // Check if pause button is clicked
+        if (mouseX > this.pauseButton.x && mouseX < this.pauseButton.x + this.pauseButton.width &&
+            mouseY > this.pauseButton.y && mouseY < this.pauseButton.y + this.pauseButton.height) {
+            this.togglePause();
         }
 
         // Check other button clicks
@@ -279,6 +322,18 @@ class Game {
         console.log(`Mouse Clicked at: (${mouseX}, ${mouseY})`);
 	}
 
+    togglePause() {
+        if (this.gameOver) return; // Prevent pausing if the game is over
+
+        this.paused = !this.paused;
+        if (this.paused) {
+            this.showPauseMessage();
+        } else {
+            requestAnimationFrame(() => this.update());
+        }
+    }
+
+
 	isInsideButton(x, y, btnX, btnY) {
 	    return x > btnX - 10 && x < btnX + 130 && y > btnY - 30 && y < btnY + 10;
 	}
@@ -288,6 +343,14 @@ class Game {
 	    let dy = y - circleY;
 	    return dx * dx + dy * dy <= radius * radius;
 	}
+
+    showPauseMessage() {
+        this.context.fillStyle = "rgba(0, 0, 0, 0.5)";
+        this.context.fillRect(0, 0, this.board.width, this.board.height);
+        this.context.fillStyle = "white";
+        this.context.font = "40px Arial";
+        this.context.fillText("Game Paused", this.board.width / 4, this.board.height / 2);
+    }
 
 	showSettings() {
         this.context.clearRect(0, 0, this.board.width, this.board.height);
