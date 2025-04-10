@@ -60,8 +60,16 @@ class AudioManager {
     }
 
     toggleSound() {
+        // Prevent double toggling: if a toggle was recently triggered, do nothing.
+        if (this._togglePending) return;
+        this._togglePending = true;
+        setTimeout(() => { this._togglePending = false; }, 300); // 300ms debounce
+
         this.soundEnabled = !this.soundEnabled;
-        console.log("Sound toggled:", this.soundEnabled); // Debugging log
+        Object.values(this.sounds).forEach(sound => {
+            sound.muted = !this.soundEnabled;
+        });
+        console.log("Sound toggled:", this.soundEnabled);
     }
 }
 
@@ -128,6 +136,16 @@ class Game {
 
         this.buttonClickHandlers = [];
 
+        // this.buttonClickHandlers.push({
+        //     x,
+        //     y,
+        //     width: buttonWidth,
+        //     height: buttonHeight,
+        //     onClick,
+        //     animationScale: 1,
+        //     isAnimating: false,
+        // });
+
         document.addEventListener("keydown", (e) => this.moveBird(e));
         document.addEventListener("click", (e) => this.handleClick(e));
     }
@@ -148,16 +166,18 @@ class Game {
         requestAnimationFrame(() => this.update());
         this.context.clearRect(0, 0, this.board.width, this.board.height);
 
-        this.drawPauseButton();
-        this.drawBackButton();
         this.drawBackButton();
         this.bird.move();
-        console.log('velocityY:',this.bird.velocityY);
 
         this.bird.draw(this.context);
 
-         if (this.bird.y > this.board.height) {
+        if (this.bird.y > this.board.height) {
             this.gameOver = true;
+        }
+
+        // ✅ Move this check *after* gameOver can be set
+        if (!this.gameOver && this.gameStarted && !this.paused) {
+            this.drawPauseButton();
         }
 
         for (let i = 0; i < this.pipes.length; i++) {
@@ -171,9 +191,8 @@ class Game {
                 pipe.passed = true;
             }
 
-            // ✅ Optimized Collision Check
             if (pipe.x + pipe.width < this.bird.x - 10) {
-                continue; // Skip checking pipes already passed
+                continue;
             }
 
             if (this.detectCollision(this.bird, pipe)) {
@@ -185,7 +204,43 @@ class Game {
         if (!this.gameOver) {
             this.pipes = this.pipes.filter(pipe => pipe.x > -this.pipeWidth);
         }
+
         this.drawScore();
+        this.drawLevel();
+
+        // ✅ If game is over, show final game over screen
+        if (this.gameOver) {
+            this.showGameOverScreen();
+        }
+    }
+
+    render() {
+        // Game logic update
+        if (this.gameStarted && !this.paused && !this.gameOver) {
+            this.update(); // You might want to call a separate update() for logic
+        }
+
+        // Clear canvas and draw everything
+        this.context.clearRect(0, 0, this.board.width, this.board.height);
+        
+        if (!this.gameStarted) {
+            this.drawMenu();
+        } else {
+            this.drawBackButton();
+            this.bird.draw(this.context);
+            this.pipes.forEach(pipe => pipe.draw(this.context));
+            this.drawScore();
+            this.drawLevel();
+            if (this.paused) {
+                this.showPauseMessage();
+            }
+            if (this.gameOver) {
+                this.showGameOverScreen();
+            }
+        }
+        
+        // Continue loop
+        requestAnimationFrame(() => this.render());
     }
 
     placePipes() {
@@ -216,8 +271,16 @@ class Game {
 	}
 
     detectCollision(a, b) {
-        return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
-        this.audioManager.play("collision"); // Play collision sound
+        const collided = a.x < b.x + b.width &&
+                         a.x + a.width > b.x &&
+                         a.y < b.y + b.height &&
+                         a.y + a.height > b.y;
+
+        if (collided) {
+            this.audioManager.play("collision");
+        }
+
+        return collided;
     }
 
     resetGame() {
@@ -232,17 +295,23 @@ class Game {
         this.start(); // Restart the game loop
     }
 
-
     drawScore() {
-        this.context.fillStyle = "white";
-        this.context.font = '45px sans-serif';
-        this.context.fillText(this.score, 5, 45);
-        if (this.gameOver) {
-            this.context.fillText('GAME OVER!', this.board.width / 8, this.board.height / 2);
+        if (!this.gameOver) {
+            this.context.fillStyle = "white";
+            this.context.font = '45px sans-serif';
+            this.context.fillText(this.score, 5, 45);
         }
     }
 
+    drawLevel() {
+            // Draw level at bottom-left corner
+        this.context.font = '20px sans-serif';
+        this.context.fillText(`Level: ${this.currentLevel}`, 5, this.board.height - 10);
+    }
+
     drawPauseButton() {
+        if (this.gameOver || !this.gameStarted) return;
+
         this.context.fillStyle = "white";
         this.context.font = "30px sans-serif";
         this.context.fillText("||", this.board.width / 2 - 10, 40);
@@ -273,10 +342,15 @@ class Game {
         }
 
         // Check if pause button is clicked
-        if (mouseX > this.pauseButton.x && mouseX < this.pauseButton.x + this.pauseButton.width &&
+        // if (mouseX > this.pauseButton.x && mouseX < this.pauseButton.x + this.pauseButton.width &&
+        //     mouseY > this.pauseButton.y && mouseY < this.pauseButton.y + this.pauseButton.height) {
+        //     this.togglePause();
+        // }
+        if (!this.gameOver && mouseX > this.pauseButton.x && mouseX < this.pauseButton.x + this.pauseButton.width &&
             mouseY > this.pauseButton.y && mouseY < this.pauseButton.y + this.pauseButton.height) {
             this.togglePause();
         }
+
 
         // Check other button clicks
         this.buttonClickHandlers.forEach(({ x, y, width, height, onClick }) => {
@@ -296,8 +370,27 @@ class Game {
                 mouseY < button.y + button.height / 2
             ) {
                 this.audioManager.play("buttonClick");
+
+                button.isAnimating = true;
+                button.animationScale = 1.2; // Initial scale for pop effect
+                // Instead of using a separate animate function that calls drawMenu, 
+                // the render loop will naturally re-draw the button with the updated scale.
+                
+                // You can update the scale gradually in an update function:
+                const animateButton = () => {
+                    if (button.animationScale > 1) {
+                        button.animationScale -= 0.05;
+                        // The render loop, running via requestAnimationFrame, will handle re-drawing.
+                        requestAnimationFrame(animateButton);
+                    } else {
+                        button.animationScale = 1;
+                        button.isAnimating = false;
+                    }
+                };
+                animateButton();
+
                 button.onClick();
-                return; // Prevent multiple clicks
+                return;
             }
         }
 
@@ -322,17 +415,20 @@ class Game {
         console.log(`Mouse Clicked at: (${mouseX}, ${mouseY})`);
 	}
 
-    togglePause() {
-        if (this.gameOver) return; // Prevent pausing if the game is over
+    goToMenu() {
+        this.gameStarted = false;
+        this.gameOver = false;
+        this.score = 0;
+        this.pipes = [];
 
-        this.paused = !this.paused;
-        if (this.paused) {
-            this.showPauseMessage();
-        } else {
-            requestAnimationFrame(() => this.update());
-        }
+        this.buttonClickHandlers = []; // Clear previous event handlers if needed
+
+        // Instead of just drawing the menu once:
+        // this.drawMenu();
+
+        // Start the render loop
+        this.render();
     }
-
 
 	isInsideButton(x, y, btnX, btnY) {
 	    return x > btnX - 10 && x < btnX + 130 && y > btnY - 30 && y < btnY + 10;
@@ -344,6 +440,18 @@ class Game {
 	    return dx * dx + dy * dy <= radius * radius;
 	}
 
+    showGameOverScreen() {
+        this.context.fillStyle = "rgba(0, 0, 0, 0.5)";
+        this.context.fillRect(0, 0, this.board.width, this.board.height);
+
+        this.context.fillStyle = "white";
+        this.context.font = "40px Arial";
+        this.context.fillText("GAME OVER!", this.board.width / 5.5, this.board.height / 2 - 30);
+
+        this.context.font = "30px Arial";
+        this.context.fillText(`Score: ${this.score}`, this.board.width / 2.8, this.board.height / 2 + 20);
+    }
+
     showPauseMessage() {
         this.context.fillStyle = "rgba(0, 0, 0, 0.5)";
         this.context.fillRect(0, 0, this.board.width, this.board.height);
@@ -353,6 +461,7 @@ class Game {
     }
 
 	showSettings() {
+        this.buttonClickHandlers = []; // ✅ Fix: Clear previous handlers
         this.context.clearRect(0, 0, this.board.width, this.board.height);
         this.context.fillStyle = "rgba(173, 216, 230,1)";
         this.context.fillRect(0, 0, this.board.width, this.board.height);
@@ -362,12 +471,12 @@ class Game {
         this.context.fillText("Settings", this.board.width / 3, 80);
         
         // Sound Toggle Button
-        this.drawButton(`Sound: ${this.soundEnabled ? "ON" : "OFF"}`, this.board.width / 2, 200, () => {
-            this.soundEnabled = !this.soundEnabled;
-            this.audioManager.soundEnabled = this.soundEnabled; // Sync with AudioManager
-            this.showSettings(); // Redraw settings menu
+        this.drawButton(`Sound: ${this.audioManager.soundEnabled ? "ON" : "OFF"}`, this.board.width / 2, 200, () => {
+            this.audioManager.toggleSound();
+            // Optionally update your local reference if needed:
+            this.soundEnabled = this.audioManager.soundEnabled;
+            this.showSettings(); // Redraw the settings screen with the updated label
         });
-
 
         // Level Selection Buttons
         let levels = ["soft", "normal", "medium", "hard"];
@@ -375,13 +484,14 @@ class Game {
             this.drawButton(level, this.board.width / 2, 300 + index * 50, () => {
                 this.currentLevel = level;
                 this.velocityX = this.levels[level];
-                this.showSettings(); // Redraw settings menu with updated value
+                this.showSettings();
             });
         });
 
         // Draw Circular Back Button
         this.drawBackButton();
     }
+
 
     showHelpMenu() {
         this.context.clearRect(0, 0, this.board.width, this.board.height);
@@ -406,28 +516,62 @@ class Game {
         this.drawMenu();
     }
 
-   drawButton(text, x, y, onClick) {
+   // drawButton(text, x, y, onClick) {
+   //      const buttonWidth = 140;
+   //      const buttonHeight = 40;
+        
+   //      // Draw button
+   //      this.context.fillStyle = "blue";
+   //      this.context.fillRect(x - buttonWidth / 2, y - buttonHeight / 2, buttonWidth, buttonHeight);
+        
+   //      // Draw text
+   //      this.context.fillStyle = "white";
+   //      this.context.font = "20px Arial";
+   //      const textWidth = this.context.measureText(text).width;
+   //      this.context.fillText(text, x - textWidth / 2, y + 6);
+
+   //      // Debugging: Check if onClick is valid
+   //      if (typeof onClick !== "function") {
+   //          console.error(`Invalid onClick handler for button: ${text}`, onClick);
+   //          return;
+   //      }
+
+   //      // Store button data with a valid onClick function
+   //      this.buttonClickHandlers.push({ x, y, width: buttonWidth, height: buttonHeight, onClick });
+   //  }
+    drawButton(text, x, y, onClick) {
         const buttonWidth = 140;
         const buttonHeight = 40;
-        
-        // Draw button
+
+        // Find the button in your click handlers array
+        const existingButton = this.buttonClickHandlers.find(btn => btn.x === x && btn.y === y);
+        let scale = 1;
+        if (existingButton && existingButton.isAnimating) {
+            scale = existingButton.animationScale;
+        }
+
+        this.context.save();
+        this.context.translate(x, y);
+        this.context.scale(scale, scale);
         this.context.fillStyle = "blue";
-        this.context.fillRect(x - buttonWidth / 2, y - buttonHeight / 2, buttonWidth, buttonHeight);
-        
-        // Draw text
+        this.context.fillRect(-buttonWidth / 2, -buttonHeight / 2, buttonWidth, buttonHeight);
         this.context.fillStyle = "white";
         this.context.font = "20px Arial";
         const textWidth = this.context.measureText(text).width;
-        this.context.fillText(text, x - textWidth / 2, y + 6);
+        this.context.fillText(text, -textWidth / 2, 6);
+        this.context.restore();
 
-        // Debugging: Check if onClick is valid
-        if (typeof onClick !== "function") {
-            console.error(`Invalid onClick handler for button: ${text}`, onClick);
-            return;
+        if (!existingButton) {
+            this.buttonClickHandlers.push({
+                x,
+                y,
+                width: buttonWidth,
+                height: buttonHeight,
+                onClick,
+                animationScale: 1,
+                isAnimating: false,
+            });
         }
-
-        // Store button data with a valid onClick function
-        this.buttonClickHandlers.push({ x, y, width: buttonWidth, height: buttonHeight, onClick });
     }
 
     drawMenu() {
@@ -511,11 +655,8 @@ class LoadingScreen {
 window.onload = function () {
     let game = new Game();
     let loadingScreen = new LoadingScreen(game.board);
-    
     loadingScreen.show();
-    
-    // Simulate asset loading
     setTimeout(() => {
-        game.drawMenu();
-    }, 4000); // Show loading screen for 3 seconds before showing the menu
+        game.goToMenu(); // This starts the render loop via goToMenu() calling this.render()
+    }, 4000);
 };
