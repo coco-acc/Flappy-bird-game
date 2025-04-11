@@ -27,7 +27,7 @@ class Pipe {
         this.width = width;
         this.height = height;
         this.passed = false;
-        this.img = img; // Use preloaded image
+        this.img = img; // Use the preloaded image directly
     }
     move(speed) {
         this.x += speed;
@@ -80,7 +80,19 @@ class Game {
         this.board.width = 360;
         this.board.height = 640;
 
-        this.bird = new Bird(this.board.width / 8, this.board.height / 2, 34, 24, "./flappybird.png");
+        // Use preloaded assets
+        this.preloadedAssets = assets.reduce((acc, asset) => {
+            acc[asset.url] = asset.object;
+            return acc;
+        }, {});
+
+        this.bird = new Bird(
+            this.board.width / 8, 
+            this.board.height / 2, 
+            34, 
+            24, 
+            this.preloadedAssets['./flappybird.png']
+        );
         this.pipes = [];
 
         this.pipeWidth = 64;
@@ -88,19 +100,24 @@ class Game {
         this.pipeX = this.board.width;
         this.pipeY = 0;
 
-        this.pipeTopImg = new Image();
-        this.pipeTopImg.src = "./toppipe.png";
+        // Use preloaded pipe images
+        this.pipeTopImg = this.preloadedAssets['./toppipe.png'];
+        this.pipeBottomImg = this.preloadedAssets['./bottompipe.png'];
 
-        this.pipeBottomImg = new Image();
-        this.pipeBottomImg.src = "./bottompipe.png";
+        // this.pipeTopImg = new Image();
+        // this.pipeTopImg.src = "./toppipe.png";
+
+        // this.pipeBottomImg = new Image();
+        // this.pipeBottomImg.src = "./bottompipe.png";
 
 
         this.soundEnabled = true; // Default value
+        // Initialize audio with preloaded files
         this.audioManager = new AudioManager(
-            "./SFX/menu-button.mp3",
-            "./SFX/menu-button.mp3",
-            "./SFX/flapping.mp3",
-            "./SFX/rubble-crash.mp3"
+            this.preloadedAssets['./SFX/menu-button.mp3'],
+            this.preloadedAssets['./SFX/menu-button.mp3'],
+            this.preloadedAssets['./SFX/flapping.mp3'],
+            this.preloadedAssets['./SFX/rubble-crash.mp3']
         );
         this.audioManager.soundEnabled = this.soundEnabled; // Sync
 
@@ -516,29 +533,6 @@ class Game {
         this.drawMenu();
     }
 
-   // drawButton(text, x, y, onClick) {
-   //      const buttonWidth = 140;
-   //      const buttonHeight = 40;
-        
-   //      // Draw button
-   //      this.context.fillStyle = "blue";
-   //      this.context.fillRect(x - buttonWidth / 2, y - buttonHeight / 2, buttonWidth, buttonHeight);
-        
-   //      // Draw text
-   //      this.context.fillStyle = "white";
-   //      this.context.font = "20px Arial";
-   //      const textWidth = this.context.measureText(text).width;
-   //      this.context.fillText(text, x - textWidth / 2, y + 6);
-
-   //      // Debugging: Check if onClick is valid
-   //      if (typeof onClick !== "function") {
-   //          console.error(`Invalid onClick handler for button: ${text}`, onClick);
-   //          return;
-   //      }
-
-   //      // Store button data with a valid onClick function
-   //      this.buttonClickHandlers.push({ x, y, width: buttonWidth, height: buttonHeight, onClick });
-   //  }
     drawButton(text, x, y, onClick) {
         const buttonWidth = 140;
         const buttonHeight = 40;
@@ -608,55 +602,152 @@ class Game {
 }
 
 class LoadingScreen {
-    constructor(board) {
+  constructor(board, assets, onComplete) {
         this.board = board;
         this.context = board.getContext('2d');
-        this.isLoading = true;
+        this.assets = assets;
+        this.onComplete = onComplete;
+        this.loadedAssets = 0;
+        this.totalAssets = assets.length;
         this.progress = 0;
+        this.errors = [];
+        this.globalTimeout = null;
     }
 
-    show() {
-        this.isLoading = true;
-        this.progress = 0;
-        this.update();
+  loadAssets() {
+        // Global timeout (30 seconds)
+        this.globalTimeout = setTimeout(() => {
+          this.errors.push('Global timeout: Maximum loading time exceeded');
+          this.finalizeLoading();
+        }, 30000);
+
+        this.assets.forEach(asset => {
+          const assetTimeout = 15000; // 15 seconds per asset
+          let timer;
+
+          const loadedHandler = () => {
+            clearTimeout(timer);
+            this.assetLoaded();
+          };
+
+          const errorHandler = () => {
+            clearTimeout(timer);
+            this.errors.push(`Failed to load: ${asset.url}`);
+            this.assetLoaded();
+          };
+
+          // Set per-asset timeout
+          timer = setTimeout(() => {
+            this.errors.push(`Timeout loading: ${asset.url}`);
+            this.assetLoaded();
+          }, assetTimeout);
+
+          if (asset.type === 'image') {
+                asset.object = new Image();
+                asset.object.onload = loadedHandler;
+                asset.object.onerror = errorHandler;
+                asset.object.src = asset.url;
+          } else if (asset.type === 'audio') {
+                asset.object = new Audio();
+                asset.object.oncanplaythrough = loadedHandler;
+                asset.object.onerror = errorHandler;
+                asset.object.src = asset.url;
+            }
+        });
     }
 
-    hide() {
-        this.isLoading = false;
+  assetLoaded() {
+        this.loadedAssets++;
+        this.progress = Math.min(
+          (this.loadedAssets / this.totalAssets) * 100,
+          100
+        );
+        this.draw();
+
+        if (this.loadedAssets >= this.totalAssets) {
+          this.finalizeLoading();
+        }
     }
 
-    update() {
-        if (!this.isLoading) return;
-        
+  finalizeLoading() {
+        clearTimeout(this.globalTimeout);
+        if (this.onComplete) {
+          this.onComplete(this.errors);
+        }
+    }
+
+  draw() {
         this.context.clearRect(0, 0, this.board.width, this.board.height);
         this.context.fillStyle = "black";
         this.context.fillRect(0, 0, this.board.width, this.board.height);
-        
+
+        // Loading text
         this.context.fillStyle = "white";
         this.context.font = "30px Arial";
-        this.context.fillText("Loading...", this.board.width / 2 - 50, this.board.height / 2 - 20);
-        
-        // Simulated loading bar
+        this.context.fillText("Loading...", this.board.width/2 - 50, this.board.height/2 - 40);
+
+        // Progress bar
+        const barWidth = this.board.width/2;
+        const barX = this.board.width/4;
+        const barY = this.board.height/2;
         this.context.strokeStyle = "white";
-        this.context.strokeRect(this.board.width / 4, this.board.height / 2, this.board.width / 2, 20);
+        this.context.strokeRect(barX, barY, barWidth, 20);
         this.context.fillStyle = "white";
-        this.context.fillRect(this.board.width / 4, this.board.height / 2, (this.progress / 100) * (this.board.width / 2), 20);
-        
-        if (this.progress < 100) {
-            this.progress += 2; // Simulate loading progress
-            setTimeout(() => this.update(), 50);
-        } else {
-            this.hide();
+        this.context.fillRect(barX, barY, (this.progress/100) * barWidth, 20);
+
+        // Progress text
+        this.context.font = "20px Arial";
+        this.context.fillText(
+            `${Math.round(this.progress)}% loaded`, 
+            this.board.width/2 - 50, 
+            this.board.height/2 + 40
+        );
+
+        // Show errors if any
+        if (this.errors.length > 0) {
+              this.context.fillStyle = "red";
+              this.context.font = "16px Arial";
+              this.context.fillText(
+                "Some assets failed to load", 
+                this.board.width/2 - 80, 
+                this.board.height/2 + 70
+            );
         }
+    }
+
+  show() {
+        this.loadAssets();
     }
 }
 
 // Integrate with the game
 window.onload = function () {
-    let game = new Game();
-    let loadingScreen = new LoadingScreen(game.board);
-    loadingScreen.show();
-    setTimeout(() => {
-        game.goToMenu(); // This starts the render loop via goToMenu() calling this.render()
-    }, 4000);
+  const assets = [
+        { type: 'image', url: './flappybird.png' },
+        { type: 'image', url: './toppipe.png' },
+        { type: 'image', url: './bottompipe.png' },
+        { type: 'audio', url: './SFX/menu-button.mp3' },
+        { type: 'audio', url: './SFX/flapping.mp3' },
+        { type: 'audio', url: './SFX/rubble-crash.mp3' }
+    ];
+
+  const board = document.getElementById('board');
+  const loadingScreen = new LoadingScreen(board, assets, (errors) => {
+    if (errors.length > 0) {
+        console.error('Loading errors:', errors);
+        // Show persistent error message
+        const errorDiv = document.createElement('div');
+        errorDiv.style.color = 'red';
+        errorDiv.style.position = 'absolute';
+        errorDiv.style.top = '10px';
+        errorDiv.style.left = '10px';
+        errorDiv.textContent = 'Some game assets failed to load - experience might be degraded';
+        document.body.appendChild(errorDiv);
+    }
+
+        const game = new Game(assets);
+        game.goToMenu();
+  });
+  
+  loadingScreen.show();
 };
